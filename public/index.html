@@ -192,7 +192,7 @@ nav{display:flex;align-items:center;gap:2px;flex:1;justify-content:center}
 .team-add-card{cursor:pointer;border:1px dashed rgba(255,255,255,.12);border-radius:var(--rl);padding:18px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;min-height:130px;color:var(--gray);font-size:12px;transition:var(--tr)}
 .team-add-card:hover{border-color:rgba(232,25,44,.4);color:var(--red)}
 /* Team row layout */
-.team-row-grid{display:flex;flex-wrap:nowrap;gap:14px;justify-content:center;overflow-x:auto;padding-bottom:6px}
+.team-row-grid{display:flex;flex-wrap:nowrap;gap:14px;justify-content:center;justify-content:safe center;overflow-x:auto;padding-bottom:6px}
 .team-row-grid .team-card{width:155px;flex-shrink:0}
 .team-row-grid .team-add-card{width:130px;flex-shrink:0;min-height:auto;padding:14px}
 .layout-toggle-btn{background:none;border:1px solid rgba(255,255,255,.15);color:var(--gray);border-radius:var(--r);padding:4px 10px;font-size:10px;cursor:pointer;transition:var(--tr);letter-spacing:1px;text-transform:uppercase}
@@ -1149,7 +1149,7 @@ function logVisit(page){
 const BG_PAGES=['home','news','services','team','about'];
 
 function switchBG(page){
-  const bgs=LS.get('bgs',{});
+  const bgs=SETTINGS.bgs||{};
   BG_PAGES.forEach(p=>{
     const el=document.getElementById('bg-'+p);if(!el)return;
     const url=bgs[p]||'';
@@ -1161,14 +1161,14 @@ function switchBG(page){
 function buildBGBlocks(){
   BG_PAGES.forEach(p=>{
     const block=document.getElementById('bg-'+p+'-block');if(!block)return;
-    const bgs=LS.get('bgs',{});const current=bgs[p]||'';
+    const bgs=SETTINGS.bgs||{};const current=bgs[p]||'';
     const names={home:'🏠 Главная',news:'📰 Новости',services:'📋 Услуги',team:'👥 Состав',about:'ℹ️ О нас'};
     block.innerHTML=`<label class="fl">${names[p]}</label>
       <div class="bg-zone" id="bgzone-${p}" onclick="document.getElementById('bgfile-${p}').click()" ondragover="event.preventDefault();this.classList.add('drag')" ondragleave="this.classList.remove('drag')" ondrop="handleBGDrop(event,'${p}')">
         <input type="file" id="bgfile-${p}" accept="image/*" style="display:none" onchange="handleBGFile(event,'${p}')">
         <div class="bg-zone-ic">🖼️</div>
         <div class="bg-zone-txt">${current?'✓ Фон установлен — кликните для замены':'Перетащите файл или кликните для выбора'}</div>
-        ${current?`<div style="font-size:10px;color:var(--red);margin-top:4px">Загружен</div>`:''}
+        ${current?`<div style="font-size:10px;color:var(--red);margin-top:4px">Загружен · виден всем посетителям</div>`:''}
       </div>
       <div style="display:flex;gap:8px;margin-top:6px;flex-wrap:wrap">
         <input type="text" class="fi" id="bgurl-${p}" placeholder="Или вставьте URL" value="${xe(current.startsWith('data:')?'':current)}" style="flex:1;font-size:12px">
@@ -1178,24 +1178,34 @@ function buildBGBlocks(){
   });
 }
 
+// Сохраняет фон на сервере — теперь виден ВСЕМ посетителям сайта,
+// а не только тому браузеру, где его установили
+async function saveBgSetting(page,url){
+  const bgs=SETTINGS.bgs||{};
+  bgs[page]=url;
+  SETTINGS.bgs=bgs;
+  try{ await API.put('/settings',{bgs}); }
+  catch(e){ toast(e.error||'Не удалось сохранить фон на сервере','e'); }
+}
+
 async function handleBGFile(event,page){
   const file=event.target.files[0];if(!file)return;
   const url=await uploadFile(file);
-  if(url){const bgs=LS.get('bgs',{});bgs[page]=url;LS.set('bgs',bgs);switchBG(curPage);buildBGBlocks();toast('Фон установлен!','s');}
+  if(url){await saveBgSetting(page,url);switchBG(curPage);buildBGBlocks();toast('Фон установлен!','s');}
 }
 async function handleBGDrop(event,page){
   event.preventDefault();document.getElementById('bgzone-'+page).classList.remove('drag');
   const file=event.dataTransfer.files[0];if(!file||!file.type.startsWith('image/'))return;
   const url=await uploadFile(file);
-  if(url){const bgs=LS.get('bgs',{});bgs[page]=url;LS.set('bgs',bgs);switchBG(curPage);buildBGBlocks();toast('Фон установлен!','s');}
+  if(url){await saveBgSetting(page,url);switchBG(curPage);buildBGBlocks();toast('Фон установлен!','s');}
 }
-function applyBGUrl(page){
+async function applyBGUrl(page){
   const url=document.getElementById('bgurl-'+page).value.trim();
-  const bgs=LS.get('bgs',{});bgs[page]=url;LS.set('bgs',bgs);
+  await saveBgSetting(page,url);
   switchBG(curPage);buildBGBlocks();toast(url?'Фон обновлён':'Фон убран','s');
 }
-function clearBG(page){
-  const bgs=LS.get('bgs',{});bgs[page]='';LS.set('bgs',bgs);
+async function clearBG(page){
+  await saveBgSetting(page,'');
   switchBG(curPage);buildBGBlocks();toast('Фон убран','i');
 }
 
