@@ -663,18 +663,19 @@ app.get('/api/stats/week',requireAdvertising,async(req,res)=>{
     slots.rows.forEach(s=>{
       if(s.accepted_id && stats[s.accepted_id]){
         const st=stats[s.accepted_id];
-        if(s.color==='green'){ st.acceptedGreen++; if(s.status)st.sentGreen++; }
-        else { st.acceptedRed++; if(s.status)st.sentRed++; }
+        if(s.color==='green')st.acceptedGreen++; else st.acceptedRed++;
       }
-      // «К выплате» начисляется тому, кто стоит в «Откинул» (а не «Принял») —
-      // именно этот сотрудник Advertising Department фактически обработал и
-      // отправил объявление в игре, поэтому оплата (payout слота) идёт ему.
-      // «Принял» — просто тот, кто изначально оформил контракт с клиентом,
-      // и учитывается отдельно только в счётчиках «Принято ЗО/КО» выше.
+      // «Отправлено» и «К выплате» начисляются тому, кто стоит в «Откинул»
+      // (а не «Принял») — именно этот сотрудник Advertising Department
+      // фактически обработал и отправил объявление в игре (отметил
+      // «Статус»), поэтому и счётчик отправки, и оплата (payout слота)
+      // идут ему. «Принял» — просто тот, кто изначально оформил контракт
+      // с клиентом, учитывается только в счётчиках «Принято ЗО/КО» выше.
       if(s.declined_id && stats[s.declined_id]){
         const st=stats[s.declined_id];
         st.declinedCount++;
         st.payout+=Number(s.payout)||0;
+        if(s.status){ if(s.color==='green')st.sentGreen++; else st.sentRed++; }
       }
     });
     const bonuses=await query(`SELECT b.*, e.name AS emp_name, e.static_id FROM bonuses b LEFT JOIN employees e ON e.id=b.employee_id WHERE b.week_start=$1 ORDER BY b.created_at`,[range.start]);
