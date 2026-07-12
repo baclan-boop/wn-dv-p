@@ -18,7 +18,15 @@ const fs           = require('fs');
 const crypto       = require('crypto');
 const multer       = require('multer');
 const cloudinary   = require('cloudinary').v2;
-const sharp        = require('sharp');
+// sharp используется ТОЛЬКО для необязательного сжатия картинок перед
+// загрузкой в Cloudinary (см. shrinkImageIfNeeded ниже). Грузим его
+// защищённо: если на конкретной платформе/архитектуре не нашлось
+// подходящего нативного бинарника и require бросает исключение — сайт
+// всё равно должен подняться и работать, просто без автосжатия (файлы
+// больше 10 МБ в этом случае будут отклоняться Cloudinary как раньше).
+let sharp = null;
+try { sharp = require('sharp'); }
+catch (e) { console.warn('ВНИМАНИЕ: модуль sharp не загрузился — автосжатие изображений перед Cloudinary отключено:', e.message); }
 
 const PORT           = process.env.PORT || 3000;
 const SESSION_SECRET = process.env.SESSION_SECRET || crypto.randomBytes(64).toString('hex');
@@ -80,7 +88,7 @@ function uploadBufferToCloudinary(buffer) {
 // GIF не трогаем вообще — пересжатие сломало бы анимацию.
 const CLOUDINARY_MAX_BYTES = 9.5*1024*1024; // небольшой запас под лимит в 10 МБ
 async function shrinkImageIfNeeded(buffer, mimetype) {
-  if (buffer.length <= CLOUDINARY_MAX_BYTES || mimetype === 'image/gif') return buffer;
+  if (!sharp || buffer.length <= CLOUDINARY_MAX_BYTES || mimetype === 'image/gif') return buffer;
   try {
     const meta = await sharp(buffer).metadata();
     const format = meta.format === 'png' ? 'png' : meta.format === 'webp' ? 'webp' : 'jpeg';
