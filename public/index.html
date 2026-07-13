@@ -185,11 +185,11 @@ nav{display:flex;align-items:center;gap:2px;flex:1;justify-content:center}
 .team-grid .team-add-card{width:160px;flex-shrink:0}
 .team-card{background:rgba(22,22,22,.75);border:1px solid rgba(255,255,255,.06);border-radius:var(--rl);padding:18px;text-align:center;transition:var(--tr);position:relative}
 .team-card:hover{border-color:rgba(232,25,44,.3);transform:translateY(-2px)}
-.team-av{width:84px;height:84px;border-radius:50%;margin:0 auto 10px;background:linear-gradient(135deg,var(--red-deeper),var(--red-dark));display:flex;align-items:center;justify-content:center;font-size:26px;font-weight:700;color:var(--white);overflow:hidden;border:2px solid rgba(232,25,44,.25)}
+.team-av{width:108px;height:108px;border-radius:50%;margin:0 auto 12px;background:linear-gradient(135deg,var(--red-deeper),var(--red-dark));display:flex;align-items:center;justify-content:center;font-size:34px;font-weight:700;color:var(--white);overflow:hidden;border:2px solid rgba(232,25,44,.25)}
 .team-av img{width:100%;height:100%;object-fit:cover}
 .team-name{font-size:13px;font-weight:600;color:var(--white);margin-bottom:4px}
 .team-role{font-size:10px;color:var(--red);letter-spacing:1.5px;text-transform:uppercase}
-.team-add-card{cursor:pointer;border:1px dashed rgba(255,255,255,.12);border-radius:var(--rl);padding:18px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;min-height:130px;color:var(--gray);font-size:12px;transition:var(--tr)}
+.team-add-card{cursor:pointer;border:1px dashed rgba(255,255,255,.12);border-radius:var(--rl);padding:18px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;min-height:154px;color:var(--gray);font-size:12px;transition:var(--tr)}
 .team-add-card:hover{border-color:rgba(232,25,44,.4);color:var(--red)}
 /* Team row layout (со скроллом) */
 .team-row-grid{display:flex;flex-wrap:nowrap;gap:14px;justify-content:center;justify-content:safe center;overflow-x:auto;padding-bottom:6px}
@@ -3098,7 +3098,7 @@ async function renderServices(){
         </div>
         ${(cat.items||[]).map(it=>`<div class="svc-item">
           <div class="svc-row"><span class="svc-name">${xe(it.name)}</span>${it.price?`<span class="svc-price">${xe(it.price)}</span>`:''}</div>
-          ${it.desc?`<div class="svc-desc">${xe(it.desc)}</div>`:''}
+          ${it.desc?`<div class="svc-desc">${renderText(it.desc)}</div>`:''}
         </div>`).join('')}
       </div>`).join('')}</div>`;
   }catch{el.innerHTML=`<div class="empty"><div class="empty-ic">📋</div><div class="empty-tx">Ошибка загрузки</div></div>`;return;}
