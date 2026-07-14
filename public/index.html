@@ -627,6 +627,7 @@ table.ct-table{width:100%;border-collapse:collapse;min-width:920px}
         <div class="sec-line"></div><div class="sec-tag">Archive</div>
       </div>
       <div class="news-grid" id="all-news-grid"></div>
+      <div id="news-load-more-wrap" style="text-align:center;margin-top:1.75rem"></div>
     </div>
   </div>
 </div>
@@ -1494,6 +1495,14 @@ const LS = {
 // ══════════════════════════════════════════════
 let CU = null;
 let NEWS = [];
+// ── Постраничная загрузка вкладки «Новости» ──
+// При большом архиве новостей рендерить все карточки разом (и качать их все
+// одним запросом) — именно то, из-за чего вкладка лагала при заходе. Вместо
+// этого грузим и рисуем небольшими порциями (см. renderAllNews/loadMoreNews).
+const NEWS_PAGE_SIZE = 12;
+let newsPageOffset = 0;
+let newsHasMore = true;
+let newsLoadingMore = false;
 let SERVICES = [];
 let TEAM = {cats:[], members:[]};
 let SETTINGS = {};
@@ -2720,7 +2729,9 @@ function ncHTML(n,featured=false){
 async function renderHomeNews(){
   const el=document.getElementById('home-news-grid');if(!el)return;
   try{
-    NEWS=await API.get('/news');
+    // Достаточно 5 последних новостей: 4 — в сетку на главной, 5-я нужна
+    // только buildTicker() для бегущей строки. Полный список качать незачем.
+    NEWS=await API.get('/news?limit=5');
     const recent=NEWS.slice(0,4);
     el.innerHTML=recent.length?recent.map((n,i)=>ncHTML(n,i===0)).join('')
       :`<div class="empty" style="grid-column:1/-1"><div class="empty-ic">📡</div><div class="empty-tx">Новостей пока нет.</div></div>`;
@@ -2738,14 +2749,60 @@ async function renderHomeNews(){
   setTimeout(initReveal,50);
 }
 
+// ══════════════════════════════════════════════
+// ВКЛАДКА «НОВОСТИ» — постраничная загрузка
+// ══════════════════════════════════════════════
+// Раньше renderAllNews() одним запросом качал ВСЕ новости (включая тяжёлое
+// поле blocks) и разом вставлял все карточки в DOM — при большом архиве
+// новостей это и вызывало лаги при заходе на вкладку (долгий запрос + долгий
+// парсинг JSON + огромная вставка в DOM за один кадр). Теперь при открытии
+// вкладки грузится и рисуется только первая порция (NEWS_PAGE_SIZE штук),
+// а остальные подгружаются по кнопке «Показать ещё» — новые карточки просто
+// дорисовываются в конец, без пересборки уже отрисованных.
 async function renderAllNews(){
   const el=document.getElementById('all-news-grid');if(!el)return;
+  newsPageOffset=0;newsHasMore=true;newsLoadingMore=false;
+  el.innerHTML=`<div class="empty" style="grid-column:1/-1"><div class="empty-tx">Загрузка…</div></div>`;
   try{
-    NEWS=await API.get('/news');
-    el.innerHTML=NEWS.length?NEWS.map((n,i)=>ncHTML(n,i===0)).join('')
+    const batch=await API.get(`/news?limit=${NEWS_PAGE_SIZE}&offset=0`);
+    NEWS=batch;
+    newsPageOffset=batch.length;
+    newsHasMore=batch.length===NEWS_PAGE_SIZE;
+    el.innerHTML=batch.length?batch.map((n,i)=>ncHTML(n,i===0)).join('')
       :`<div class="empty" style="grid-column:1/-1"><div class="empty-ic">📰</div><div class="empty-tx">Новостей пока нет.</div></div>`;
-  }catch{el.innerHTML=`<div class="empty" style="grid-column:1/-1"><div class="empty-ic">📰</div><div class="empty-tx">Ошибка загрузки</div></div>`;}
+  }catch{
+    el.innerHTML=`<div class="empty" style="grid-column:1/-1"><div class="empty-ic">📰</div><div class="empty-tx">Ошибка загрузки</div></div>`;
+    newsHasMore=false;
+  }
+  renderNewsLoadMoreBtn();
   setTimeout(initReveal,50); // см. комментарий в renderHomeNews() выше
+}
+
+function renderNewsLoadMoreBtn(){
+  const wrap=document.getElementById('news-load-more-wrap');if(!wrap)return;
+  wrap.innerHTML=newsHasMore?`<button class="btn btn-o" id="news-load-more-btn" onclick="loadMoreNews()">Показать ещё</button>`:'';
+}
+
+async function loadMoreNews(){
+  if(newsLoadingMore||!newsHasMore)return;
+  newsLoadingMore=true;
+  const btn=document.getElementById('news-load-more-btn');
+  if(btn){btn.disabled=true;btn.textContent='Загрузка…';}
+  try{
+    const batch=await API.get(`/news?limit=${NEWS_PAGE_SIZE}&offset=${newsPageOffset}`);
+    if(batch.length){
+      NEWS=NEWS.concat(batch);
+      newsPageOffset+=batch.length;
+      const el=document.getElementById('all-news-grid');
+      if(el)el.insertAdjacentHTML('beforeend',batch.map(n=>ncHTML(n,false)).join(''));
+    }
+    newsHasMore=batch.length===NEWS_PAGE_SIZE;
+  }catch{
+    toast('Не удалось загрузить ещё новости','e');
+  }
+  newsLoadingMore=false;
+  renderNewsLoadMoreBtn();
+  setTimeout(initReveal,50);
 }
 
 function isEmbed(u){return u.includes('fliphtml5.com')||u.includes('youtube.com')||u.includes('youtu.be')||u.includes('vimeo.com')}
@@ -2822,8 +2879,15 @@ function renderText(text){
   return restoreRawLinks(restoreColorSpans(escapeAndLinkify(w2),spans),tags);
 }
 
-function openNews(id){
-  const n=NEWS.find(x=>x.id===id);if(!n)return;
+async function openNews(id){
+  // Лёгкий список (NEWS) больше не содержит blocks/bg_img (см. комментарий
+  // к GET /api/news на сервере) — для полного текста статьи подгружаем её
+  // отдельным запросом.
+  let n=null;
+  try{ n=await API.get('/news/'+id); }catch{ toast('Не удалось загрузить статью','e'); return; }
+  if(!n)return;
+  const idx=NEWS.findIndex(x=>x.id===id);
+  if(idx>=0)NEWS[idx]={...NEWS[idx],...n}; else NEWS.push(n);
   document.getElementById('nf-title').textContent=n.title;
   document.getElementById('nf-title').style.color=n.title_color&&n.title_color!=='#ffffff'?n.title_color:'';
   document.getElementById('nf-author').textContent=`Автор: ${n.author_name||'Редакция'} · ${fdt(n.created_at)}`;
@@ -3038,7 +3102,7 @@ function fromDatetimeLocal(value){
   return d.toISOString();
 }
 
-function openNewsModal(id=null){
+async function openNewsModal(id=null){
   ['news-edit-id','news-title-input','news-cat-input','news-excerpt-input','news-img-input','news-bg-input','news-date-input'].forEach(i=>{const e=document.getElementById(i);if(e)e.value='';});
   clearUploadedImg('news-img');clearUploadedImg('news-bg');
   document.getElementById('news-title-color').value='#ffffff';
@@ -3047,8 +3111,14 @@ function openNewsModal(id=null){
   setNewsAlign('left');newsBlocks=[];renderNewsBlocks();
   document.getElementById('modal-news-title').textContent='Добавить новость';
   if(id){
-    const n=NEWS.find(n=>n.id===id);
+    // Лёгкий список (NEWS) не содержит blocks/bg_img — подгружаем полную
+    // новость отдельным запросом, иначе форма редактирования потеряет
+    // содержимое статьи и фон.
+    let n=null;
+    try{ n=await API.get('/news/'+id); }catch{ toast('Не удалось загрузить новость для редактирования','e'); return; }
     if(n){
+      const idx=NEWS.findIndex(x=>x.id===id);
+      if(idx>=0)NEWS[idx]={...NEWS[idx],...n}; else NEWS.push(n);
       document.getElementById('news-edit-id').value=n.id;
       document.getElementById('news-title-input').value=n.title||'';
       document.getElementById('news-cat-input').value=n.category||'';
