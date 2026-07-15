@@ -19,45 +19,56 @@
   --font-b:'Inter',sans-serif;
   --tr:0.3s ease;--r:8px;--rl:12px;
   /* ── СВЕТЛАЯ ТЕМА: переменные ниже по умолчанию равны тёмной теме и
-     переопределяются только внутри «плоских» (без фонового фото) страниц —
-     Панель управления, Реклама, Вход — когда включена светлая тема (см.
-     [data-theme="light"] #page-admin/#page-adhub/#page-auth ниже). Публичные
-     страницы (Главная/Новости/Услуги/Состав/О нас) всегда поверх фото с тёмной
-     дымкой — они не участвуют в переключении темы и остаются как есть. */
+     переопределяются глобально (на <html>) через [data-theme="light"] —
+     переключатель темы действует на ВСЕ страницы сайта, а не только на
+     «плоские» (Панель управления, Реклама, Вход). Фоновые фото публичных
+     страниц (Главная/Новости/Услуги/Состав/О нас) в светлой теме скрываются
+     (см. .page-bg-layer и #page-news-full::before/::after ниже), и сами
+     страницы получают тот же плоский светлый фон, что и панель управления. */
   --ink:#FFF;                 /* основной текст на нейтральных поверхностях */
   --flat-bg:#0A0A0A;          /* фон «плоских» страниц (Панель/Реклама/Вход) */
   --ovl:255,255,255;         /* RGB-триплет для полупрозрачных подложек/рамок */
 }
-[data-theme="light"] #page-admin,
-[data-theme="light"] #page-adhub,
-[data-theme="light"] #page-auth{
+[data-theme="light"]{
   --dark:#FFFFFF;--dark2:#FBFAF8;--dark3:#F0EEEA;
   --gray:#6B6660;--off-white:#2A2723;
   --ink:#18140F;--flat-bg:#F4F2EE;--ovl:15,15,15;
   color-scheme:light;
 }
-#page-admin.active,#page-adhub.active,#page-auth.active{background:var(--flat-bg);min-height:calc(100vh - 92px)}
-[data-theme="light"] #page-admin ::-webkit-scrollbar-track,
-[data-theme="light"] #page-adhub ::-webkit-scrollbar-track,
-[data-theme="light"] #page-auth ::-webkit-scrollbar-track{background:#EAE7E1}
+/* Раньше сплошной светлый фон получали только Панель/Реклама/Вход — теперь
+   любая активная страница (в тёмной теме --flat-bg совпадает с --black,
+   так что для тёмной темы ничего не меняется). */
+[data-theme="light"] .page.active,#page-admin.active,#page-adhub.active,#page-auth.active{background:var(--flat-bg);min-height:calc(100vh - 92px)}
+/* В светлой теме прячем фоновые фото публичных страниц — тёмное фото с
+   дымкой не сочетается со сплошным белым фоном. */
+[data-theme="light"] .page-bg-layer{opacity:0!important}
+[data-theme="light"] #page-news-full::before,[data-theme="light"] #page-news-full::after{background:none!important}
+/* Карточки новостей/услуг/состава были полупрозрачно-тёмными в расчёте на
+   фоновое фото под ними — в светлой теме фото нет, делаем карточки сплошными
+   светлыми, чтобы текст на них оставался читаемым. */
+[data-theme="light"] .nc,[data-theme="light"] .svc-card,[data-theme="light"] .team-card{background:#FFFFFF}
+[data-theme="light"] .nc-img{background:#F0EEEA}
+/* .hero-title и кнопки в .hero-btns рассчитаны на белый текст поверх тёмного
+   фото — в светлой теме фон плоский светлый, возвращаем тёмный текст. */
+[data-theme="light"] .hero-title{color:var(--ink)}
+[data-theme="light"] .hero-btns .btn-o{color:var(--ink)}
+[data-theme="light"] ::-webkit-scrollbar-track{background:#EAE7E1}
 /* .btn-o используется и в тёмной шапке/герое (там всегда должен остаться
-   белым), и внутри «плоских» страниц (где сам .btn-o теперь берёт --ink) —
-   явно возвращаем белый цвет в местах, которые всегда тёмные. */
+   белым — шапка и мобильное меню тёмные независимо от темы), и на плоских
+   поверхностях (где сам .btn-o теперь берёт --ink) — явно возвращаем белый
+   цвет в местах, которые остаются тёмными всегда. */
 #hdr .btn-o,#mob-nav .btn-o,.hero-btns .btn-o{color:#fff}
 #hdr .btn-o:hover,#mob-nav .btn-o:hover,.hero-btns .btn-o:hover{background:rgba(var(--ovl),.08)}
 /* .fi/.fta/.fsel задают color-scheme:dark напрямую на себе (это выигрывает
    у унаследованного значения) — переопределяем явно для нативного вида
-   инпутов (календарик у type=date, стрелочки у number) внутри плоских
-   светлых страниц. */
-[data-theme="light"] #page-admin .fi,[data-theme="light"] #page-admin .fta,[data-theme="light"] #page-admin .fsel,
-[data-theme="light"] #page-adhub .fi,[data-theme="light"] #page-adhub .fta,[data-theme="light"] #page-adhub .fsel,
-[data-theme="light"] #page-auth .fi,[data-theme="light"] #page-auth .fta,[data-theme="light"] #page-auth .fsel{color-scheme:light}
+   инпутов (календарик у type=date, стрелочки у number) в светлой теме. */
+[data-theme="light"] .fi,[data-theme="light"] .fta,[data-theme="light"] .fsel{color-scheme:light}
 /* .auth-card и .admin-sb используют не переменные, а готовые тёмные rgba —
    переопределяем их отдельно под светлую тему. */
 [data-theme="light"] #page-auth .auth-card{background:#FEFDFB;border-color:rgba(232,25,44,.25)}
 [data-theme="light"] #page-admin .admin-sb{background:rgba(250,249,246,.95);border-right-color:rgba(0,0,0,.06)}
 html{scroll-behavior:smooth}
-body{background:var(--black);color:var(--ink);font-family:var(--font-b);min-height:100vh;overflow-x:hidden}
+body{background:var(--flat-bg);color:var(--ink);font-family:var(--font-b);min-height:100vh;overflow-x:hidden}
 ::-webkit-scrollbar{width:5px}
 ::-webkit-scrollbar-track{background:var(--dark)}
 ::-webkit-scrollbar-thumb{background:var(--red);border-radius:3px}
@@ -491,7 +502,9 @@ table.ct-table{width:100%;border-collapse:collapse;min-width:920px}
 .ct-upcoming{background:rgba(var(--ovl),.02);border:1px solid rgba(var(--ovl),.08);border-radius:var(--rl);padding:16px;margin-bottom:18px}
 .ct-upcoming-hdr{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px;flex-wrap:wrap}
 .ct-upcoming-title{font-family:var(--font-d);font-size:16px;letter-spacing:1px;color:var(--ink)}
-.ct-upcoming-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:10px}
+.ct-upcoming-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:10px;max-height:290px;overflow-y:auto;padding-right:2px}
+.ct-upcoming-count{font-size:11px;color:var(--gray);font-weight:600;white-space:nowrap}
+.ct-upcoming-count.has-overdue{color:#ffb020}
 .ct-upcoming-empty{color:var(--gray);font-size:12px;padding:6px 2px;grid-column:1/-1}
 .ct-upcoming-item{border-radius:var(--r);padding:11px 12px;border:1px solid rgba(var(--ovl),.08);background:rgba(var(--ovl),.03);border-left:3px solid #2ed573}
 .ct-upcoming-item.red{border-left-color:var(--red)}
@@ -622,7 +635,7 @@ table.ct-table{width:100%;border-collapse:collapse;min-width:920px}
   </nav>
   <div class="hdr-right">
     <button id="btn-add-news" onclick="openNewsModal()">+ Новость</button>
-    <button id="theme-toggle-btn" class="btn btn-o btn-sm" onclick="toggleTheme()" title="Светлая/тёмная тема (Панель управления и Реклама)" aria-label="Переключить тему">🌙</button>
+    <button id="theme-toggle-btn" class="btn btn-o btn-sm" onclick="toggleTheme()" title="Светлая/тёмная тема" aria-label="Переключить тему">🌙</button>
     <div id="auth-ctrl"></div>
     <button id="mob-menu-btn" onclick="toggleMobMenu()" aria-label="Меню">
       <span></span><span></span><span></span>
@@ -1105,7 +1118,10 @@ table.ct-table{width:100%;border-collapse:collapse;min-width:920px}
         <div id="ct-view-table">
           <div class="ct-upcoming" id="ct-upcoming">
             <div class="ct-upcoming-hdr">
-              <span class="ct-upcoming-title">⏰ Ближайшие объявления к отправке</span>
+              <span style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                <span class="ct-upcoming-title">⏰ Ближайшие объявления к отправке</span>
+                <span class="ct-upcoming-count" id="ct-upcoming-count"></span>
+              </span>
               <button type="button" class="btn btn-o btn-sm" onclick="loadUpcomingAds()">Обновить</button>
             </div>
             <div class="ct-upcoming-list" id="ct-upcoming-list">
@@ -1596,10 +1612,11 @@ const LS = {
 
 // ══════════════════════════════════════════════
 // СВЕТЛАЯ / ТЁМНАЯ ТЕМА
-// Переключатель влияет на «плоские» (без фонового фото) страницы — Панель
-// управления, Реклама, Вход — именно там сотрудники проводят всё рабочее
-// время. Публичные страницы с фото (Главная/Новости/Услуги/Состав/О нас)
-// сохраняют фирменный тёмный кинематографичный вид независимо от темы.
+// Переключатель влияет на весь сайт целиком (все страницы, а не только
+// Панель управления/Реклама/Вход). В светлой теме фоновые фото публичных
+// страниц (Главная/Новости/Услуги/Состав/О нас) скрываются и страницы
+// получают такой же плоский светлый фон — см. [data-theme="light"] в CSS.
+// Шапка сайта и футер остаются тёмными в любой теме (фирменные элементы).
 // ══════════════════════════════════════════════
 function applyTheme(theme){
   document.documentElement.setAttribute('data-theme',theme);
@@ -2356,26 +2373,49 @@ function ctCopyRowText(id,btn){
 // полночь (например 13:00 → 03:00 следующих суток).
 // ══════════════════════════════════════════════
 let CT_UPCOMING=[];
-// Переводит slot_time («ЧЧ:ММ») + slot_date в реальный Date с учётом того,
-// что времена до начала расписания (например 00:10 при старте в 13:00)
+// ── Часовой пояс: панель всегда работает по московскому времени (МСК,
+// UTC+3, без перехода на летнее/зимнее время) — расписание объявлений
+// привязано к МСК, а не к локальному часовому поясу браузера того, кто
+// смотрит панель. Поэтому даты/время здесь считаются НЕ через локальные
+// геттеры Date (getHours/getDate и т.п. отдают время в зоне устройства
+// зрителя), а всегда явно пересчитываются в МСК через геттеры *UTC + сдвиг
+// на 3 часа — так результат одинаков независимо от того, где физически
+// находится и как настроен часовой пояс на компьютере/телефоне зрителя.
+const MSK_OFFSET_MS=3*60*60*1000;
+// Компоненты даты/времени по МСК для произвольного реального timestamp (мс)
+function mskPartsOf(ts){
+  const d=new Date(ts+MSK_OFFSET_MS);
+  return { y:d.getUTCFullYear(), mo:d.getUTCMonth()+1, da:d.getUTCDate(), h:d.getUTCHours(), mi:d.getUTCMinutes() };
+}
+// ISO-дата (YYYY-MM-DD) «сегодня» по МСК
+function todayISOMSK(){
+  const p=mskPartsOf(Date.now());
+  return p.y+'-'+String(p.mo).padStart(2,'0')+'-'+String(p.da).padStart(2,'0');
+}
+// Настоящий timestamp момента «ЧЧ:ММ» указанной даты по МСК
+function mskWallToEpoch(dateISO,timeStr){
+  const [y,mo,da]=dateISO.split('-').map(Number);
+  const [hh,mm]=(timeStr||'0:0').split(':').map(Number);
+  return Date.UTC(y,mo-1,da,hh||0,mm||0,0,0)-MSK_OFFSET_MS;
+}
+// Переводит slot_time («ЧЧ:ММ») + slot_date в реальный Date (по МСК) с учётом
+// того, что времена до начала расписания (например 00:10 при старте в 13:00)
 // фактически относятся к следующим суткам.
 function ctSlotActualDate(dateISO,timeStr,schedStartStr){
   const toMin=t=>{const[h,m]=(t||'0:0').split(':').map(Number);return h*60+m;};
-  const d=new Date(dateISO+'T00:00:00');
-  if(toMin(timeStr)<toMin(schedStartStr)) d.setDate(d.getDate()+1);
-  const [hh,mm]=timeStr.split(':').map(Number);
-  d.setHours(hh||0,mm||0,0,0);
-  return d;
+  const actualDateISO=toMin(timeStr)<toMin(schedStartStr)?shiftISO(dateISO,1):dateISO;
+  return new Date(mskWallToEpoch(actualDateISO,timeStr));
 }
 function fmtUpcomingDT(dt){
-  const now=new Date();
-  const dOnly=x=>{const y=new Date(x);y.setHours(0,0,0,0);return y;};
-  const diff=Math.round((dOnly(dt)-dOnly(now))/86400000);
-  const hhmm=String(dt.getHours()).padStart(2,'0')+':'+String(dt.getMinutes()).padStart(2,'0');
-  if(diff===0)return `Сегодня, ${hhmm}`;
-  if(diff===1)return `Завтра, ${hhmm}`;
-  if(diff===-1)return `Вчера, ${hhmm}`;
-  return `${fmtPlainDate(dt.getFullYear()+'-'+String(dt.getMonth()+1).padStart(2,'0')+'-'+String(dt.getDate()).padStart(2,'0'))}, ${hhmm}`;
+  const p=mskPartsOf(dt.getTime());
+  const now=mskPartsOf(Date.now());
+  const dOnlyTs=x=>Date.UTC(x.y,x.mo-1,x.da);
+  const diff=Math.round((dOnlyTs(p)-dOnlyTs(now))/86400000);
+  const hhmm=String(p.h).padStart(2,'0')+':'+String(p.mi).padStart(2,'0');
+  if(diff===0)return `Сегодня, ${hhmm} МСК`;
+  if(diff===1)return `Завтра, ${hhmm} МСК`;
+  if(diff===-1)return `Вчера, ${hhmm} МСК`;
+  return `${fmtPlainDate(p.y+'-'+String(p.mo).padStart(2,'0')+'-'+String(p.da).padStart(2,'0'))}, ${hhmm} МСК`;
 }
 async function loadUpcomingAds(){
   const box=document.getElementById('ct-upcoming-list');
@@ -2387,7 +2427,7 @@ async function loadUpcomingAds(){
   // по кнопкам. Вместо этого старые карточки остаются на экране без
   // изменения высоты, пока не придут свежие данные, и подменяются разом.
   try{
-    const today=todayISO(), tomorrow=shiftISO(today,1);
+    const today=todayISOMSK(), tomorrow=shiftISO(today,1);
     const [g0,g1,r0,r1]=await Promise.all([
       API.get(`/contracts?color=green&date=${today}`),
       API.get(`/contracts?color=green&date=${tomorrow}`),
@@ -2430,13 +2470,22 @@ async function loadUpcomingAds(){
 }
 function renderUpcomingAds(list){
   const box=document.getElementById('ct-upcoming-list');
+  const countEl=document.getElementById('ct-upcoming-count');
   if(!box)return;
   CT_UPCOMING=list;
   if(!list.length){
     box.innerHTML=`<div class="ct-upcoming-empty">Нет объявлений, ожидающих отправки</div>`;
+    if(countEl){ countEl.textContent=''; countEl.classList.remove('has-overdue'); }
     return;
   }
   const now=Date.now();
+  // Счётчик у заголовка — чтобы было видно, сколько объявлений просрочено,
+  // не прокручивая список (список теперь с ограниченной высотой, см. CSS).
+  const overdueCount=list.filter(s=>s.dt.getTime()<now).length;
+  if(countEl){
+    countEl.textContent=overdueCount?`⚠ просрочено: ${overdueCount}`:`предстоящих: ${list.length}`;
+    countEl.classList.toggle('has-overdue',overdueCount>0);
+  }
   box.innerHTML=list.map((s,i)=>{
     const overdue=s.dt.getTime()<now;
     return `<div class="ct-upcoming-item ${s.color}${overdue?' overdue':''}">
