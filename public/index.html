@@ -506,6 +506,7 @@ table.ct-table{width:100%;border-collapse:collapse;min-width:920px}
 .ct-upcoming-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:10px;max-height:290px;overflow-y:auto;padding-right:2px}
 .ct-upcoming-count{font-size:11px;color:var(--gray);font-weight:600;white-space:nowrap}
 .ct-upcoming-count.has-overdue{color:#ffb020}
+.ct-pending-badge{display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:var(--red);color:#fff;font-size:11px;font-weight:700;margin-left:4px}
 .ct-upcoming-empty{color:var(--gray);font-size:12px;padding:6px 2px;grid-column:1/-1}
 .ct-upcoming-item{border-radius:var(--r);padding:11px 12px;border:1px solid rgba(var(--ovl),.08);background:rgba(var(--ovl),.03);border-left:3px solid #2ed573}
 .ct-upcoming-item.red{border-left-color:var(--red)}
@@ -1114,6 +1115,18 @@ table.ct-table{width:100%;border-collapse:collapse;min-width:920px}
           <button class="subtab green" id="ct-tab-green" onclick="switchCTColor('green')">🟢 Зелёные объявления</button>
           <button class="subtab red" id="ct-tab-red" onclick="switchCTColor('red')">🔴 Красные объявления</button>
           <button class="subtab plain" id="ct-tab-add" onclick="switchCTView('add')">➕ Добавить контракт</button>
+          <button class="subtab plain" id="ct-tab-pending" onclick="switchCTView('pending')" style="display:none">🕒 На одобрении <span class="ct-pending-badge" id="ct-pending-badge" style="display:none"></span></button>
+        </div>
+
+        <div id="ct-view-pending" style="display:none">
+          <div class="acard">
+            <div class="acard-hdr">
+              <div class="acard-title">🕒 Заявки на добавление контракта</div>
+              <button type="button" class="btn btn-o btn-sm" onclick="loadPendingContracts()">↻ Обновить</button>
+            </div>
+            <div class="fhint" style="margin-bottom:14px">Здесь можно поправить любое поле заявки перед одобрением — цвет, времена, даты, текст, скидку, сотрудника. После одобрения контракт сразу попадает в таблицу «Контракты» (слоты перепроверяются на занятость в момент одобрения).</div>
+            <div id="ct-pending-list"><div style="padding:2rem;text-align:center;color:var(--gray)">Загрузка...</div></div>
+          </div>
         </div>
 
         <div id="ct-view-table">
@@ -1148,7 +1161,7 @@ table.ct-table{width:100%;border-collapse:collapse;min-width:920px}
         <div class="ctadd-layout">
           <div class="acard" style="max-width:640px;padding:22px">
             <div class="acard-title" style="margin-bottom:4px">➕ Добавить контракт</div>
-            <div class="acard-sub" style="margin-bottom:16px">Укажите дату начала и срок. Если хотя бы один нужный слот занят — контракт не создастся, будет показано, что именно занято.</div>
+            <div class="acard-sub" style="margin-bottom:16px">Укажите дату начала и срок. Если хотя бы один нужный слот занят — заявка не отправится, будет показано, что именно занято. После отправки контракт попадёт в таблицу только после одобрения Curator AD (и выше).</div>
 
             <div class="fg">
               <label class="fl">Тип объявлений</label>
@@ -1203,7 +1216,7 @@ table.ct-table{width:100%;border-collapse:collapse;min-width:920px}
 
             <div id="ctadd-error" style="display:none;margin-top:14px;color:var(--red);font-size:12px;background:rgba(232,25,44,.08);border:1px solid rgba(232,25,44,.28);border-radius:var(--r);padding:10px 12px;line-height:1.5"></div>
 
-            <button class="btn btn-p" style="width:100%;justify-content:center;margin-top:16px" id="ctadd-submit" onclick="submitCTAdd()">✅ Проверить и создать контракт</button>
+            <button class="btn btn-p" style="width:100%;justify-content:center;margin-top:16px" id="ctadd-submit" onclick="submitCTAdd()">📨 Проверить и отправить на одобрение</button>
           </div>
 
           <div class="acard ctadd-summary">
@@ -2149,9 +2162,12 @@ function shiftISO(iso,days){
 function ctShowView(view){
   const vt=document.getElementById('ct-view-table');
   const va=document.getElementById('ct-view-add');
-  if(vt)vt.style.display=view==='add'?'none':'';
+  const vp=document.getElementById('ct-view-pending');
+  if(vt)vt.style.display=(view==='add'||view==='pending')?'none':'';
   if(va)va.style.display=view==='add'?'':'none';
+  if(vp)vp.style.display=view==='pending'?'':'none';
   document.getElementById('ct-tab-add')?.classList.toggle('active',view==='add');
+  document.getElementById('ct-tab-pending')?.classList.toggle('active',view==='pending');
 }
 
 async function switchCTColor(color){
@@ -2167,12 +2183,18 @@ async function setCTDate(val){ if(val){CT_STATE.date=val; await loadContractsTab
 
 async function switchCTView(view){
   if(view==='add'&&!canAds()){toast('Нет доступа','e');return;}
+  if(view==='pending'&&!canManageAdsFull()){toast('Нет доступа','e');return;}
   if(view==='add'){
     document.getElementById('ct-tab-green')?.classList.remove('active');
     document.getElementById('ct-tab-red')?.classList.remove('active');
     ctShowView('add');
     CTADD_STATE.color=CT_STATE.color; // по умолчанию — тот же цвет, что был открыт в таблице
     await initCTAddForm();
+  } else if(view==='pending'){
+    document.getElementById('ct-tab-green')?.classList.remove('active');
+    document.getElementById('ct-tab-red')?.classList.remove('active');
+    ctShowView('pending');
+    await loadPendingContracts();
   } else {
     await switchCTColor(CT_STATE.color);
   }
@@ -2183,13 +2205,17 @@ async function openContractsTab(color){
   document.getElementById('ct-tab-green')?.classList.toggle('active',CT_STATE.color==='green');
   document.getElementById('ct-tab-red')?.classList.toggle('active',CT_STATE.color==='red');
   // «Добавить контракт» — доступно всем сотрудникам с доступом к «Рекламе»
-  // (Advertising Department и выше), не только Curator AD и выше.
+  // (Advertising Dept. и выше), не только Curator AD и выше.
   const addTabBtn=document.getElementById('ct-tab-add');
   if(addTabBtn)addTabBtn.style.display=canAds()?'':'none';
+  // «На одобрении» — только Curator AD и выше (кто может одобрять заявки).
+  const pendingTabBtn=document.getElementById('ct-tab-pending');
+  if(pendingTabBtn)pendingTabBtn.style.display=canManageAdsFull()?'':'none';
   ctShowView('table');
   await ensureEmployeesLoaded();
   await loadContractsTable();
   loadUpcomingAds();
+  if(canManageAdsFull())refreshPendingBadge();
 }
 
 let CT_ROWS=[];
@@ -2358,6 +2384,7 @@ document.addEventListener('mousedown',function(e){
 function empComboOnChange(comboId,id){
   if(comboId.indexOf('ct-acc-')===0) ctSave(comboId.slice('ct-acc-'.length),{accepted_id:id||null});
   else if(comboId.indexOf('ct-dec-')===0) ctSave(comboId.slice('ct-dec-'.length),{declined_id:id||null});
+  else if(comboId.indexOf('pending-emp-')===0) pendingFieldChanged(comboId.slice('pending-emp-'.length),'accepted_id',id||null);
 }
 
 // ══════════════════════════════════════════════
@@ -2820,23 +2847,169 @@ async function submitCTAdd(){
   const btn=document.getElementById('ctadd-submit');
   btn.disabled=true; btn.textContent='Проверяю...';
   try{
-    const r=await API.post('/contracts/bulk',{ color:CTADD_STATE.color, times, dates, text, accepted_id:employeeId, discount });
-    toast(`Контракт создан: заполнено ${r.filled} слот(ов)`,'s');
+    await API.post('/contracts/bulk',{ color:CTADD_STATE.color, times, dates, text, accepted_id:employeeId, discount });
+    toast('Заявка отправлена на одобрение Curator AD','s');
     CT_STATE.color=CTADD_STATE.color;
     CT_STATE.date=dates[0];
     await switchCTColor(CT_STATE.color);
-    loadUpcomingAds();
+    if(canManageAdsFull())refreshPendingBadge();
   }catch(e){
     if(e.busy&&e.busy.length){
       const list=e.busy.map(b=>`${fmtPlainDate(b.date)} ${b.time}`).join(', ');
       errEl.textContent=`Заняты слоты: ${list}. Измените время или срок и попробуйте снова.`;
     } else {
-      errEl.textContent=e.error||'Ошибка при создании контракта';
+      errEl.textContent=e.error||'Ошибка при отправке заявки';
     }
     errEl.style.display='block';
   }finally{
-    btn.disabled=false; btn.textContent='✅ Проверить и создать контракт';
+    btn.disabled=false; btn.textContent='📨 Проверить и отправить на одобрение';
   }
+}
+
+// ══════════════════════════════════════════════
+// ЗАЯВКИ НА ДОБАВЛЕНИЕ КОНТРАКТА, ОЖИДАЮЩИЕ ОДОБРЕНИЯ (Curator AD и выше)
+// Заявка создаётся отправкой формы «Добавить контракт» (см. submitCTAdd
+// выше) — любым сотрудником с доступом к «Рекламе». Здесь Curator AD,
+// Dep. Director, Лидер и Администратор могут поправить ЛЮБОЕ поле заявки
+// перед одобрением; после одобрения контракт записывается в саму таблицу.
+// ══════════════════════════════════════════════
+let PENDING_CONTRACTS=[];
+
+async function refreshPendingBadge(){
+  try{ PENDING_CONTRACTS=await API.get('/contracts/pending'); }catch{ PENDING_CONTRACTS=[]; }
+  updatePendingBadge();
+}
+function updatePendingBadge(){
+  const badge=document.getElementById('ct-pending-badge');
+  if(!badge)return;
+  const n=PENDING_CONTRACTS.length;
+  badge.textContent=n?String(n):'';
+  badge.style.display=n?'inline-flex':'none';
+}
+
+async function loadPendingContracts(){
+  const box=document.getElementById('ct-pending-list');
+  if(!box)return;
+  box.innerHTML='<div style="padding:2rem;text-align:center;color:var(--gray)">Загрузка...</div>';
+  try{
+    await ensureEmployeesLoaded();
+    PENDING_CONTRACTS=await API.get('/contracts/pending');
+    renderPendingContracts();
+  }catch(e){
+    box.innerHTML=`<div style="padding:2rem;text-align:center;color:var(--red)">⚠ ${xe(e.error||'Нет доступа')}</div>`;
+  }
+  updatePendingBadge();
+}
+
+// Ориентировочная сумма заказа — считается на лету по той же формуле, что и
+// в Калькуляторе/при одобрении; точный пересчёт происходит на сервере
+// в момент одобрения (см. commitContractToSlots в server.js).
+function pendingCalcSum(p){
+  const chars=(p.text||'').length;
+  const totalAds=(p.times||[]).length*(p.dates||[]).length;
+  const rate=p.color==='red'?150:300;
+  return (totalAds*chars*rate)*(1-(Number(p.discount)||0)/100);
+}
+
+function renderPendingContracts(){
+  const box=document.getElementById('ct-pending-list');
+  if(!box)return;
+  if(!PENDING_CONTRACTS.length){
+    box.innerHTML='<div class="ct-upcoming-empty">Нет заявок, ожидающих одобрения</div>';
+    return;
+  }
+  box.innerHTML=PENDING_CONTRACTS.map(p=>`
+    <div class="acard" data-pid="${p.id}" style="margin-bottom:14px">
+      <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:12px">
+        <div style="font-size:12px;color:var(--gray)">Заявка от <b>${xe(p.submitted_by_name||'—')}</b>${p.created_at?' · '+xe(fmtPlainDate((p.created_at||'').slice(0,10))):''}</div>
+        <div style="display:flex;gap:6px">
+          <button type="button" class="btn btn-sm" style="background:#2ed573;color:#04170c;${p.color==='green'?'':'opacity:.35'}" onclick="pendingFieldChanged('${p.id}','color','green')">🟢 Зелёные</button>
+          <button type="button" class="btn btn-sm" style="background:#e8192c;color:#fff;${p.color==='red'?'':'opacity:.35'}" onclick="pendingFieldChanged('${p.id}','color','red')">🔴 Красные</button>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div class="fg"><label class="fl">Времена (через запятую, ЧЧ:ММ)</label><input type="text" class="fi" value="${xe((p.times||[]).join(', '))}" onchange="pendingFieldChanged('${p.id}','times',this.value)"></div>
+        <div class="fg"><label class="fl">Даты (через запятую, ГГГГ-ММ-ДД)</label><input type="text" class="fi" value="${xe((p.dates||[]).join(', '))}" onchange="pendingFieldChanged('${p.id}','dates',this.value)"></div>
+      </div>
+      <div class="fg"><label class="fl">Текст объявления</label><textarea class="fta" onchange="pendingFieldChanged('${p.id}','text',this.value)">${xe(p.text)}</textarea></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div class="fg"><label class="fl">Скидка (%)</label><input type="number" class="fi" min="0" max="100" value="${Number(p.discount)||0}" onchange="pendingFieldChanged('${p.id}','discount',this.value)"></div>
+        <div class="fg"><label class="fl">Кто принял контракт</label><div id="pending-emp-${p.id}"></div></div>
+      </div>
+      <div class="fhint" style="margin:-4px 0 10px">Ориентировочная сумма заказа: <b>${fmtMoney(pendingCalcSum(p))}</b> (точно пересчитается при одобрении)</div>
+      <div id="pending-err-${p.id}" style="display:none;margin-bottom:10px;color:var(--red);font-size:12px;background:rgba(232,25,44,.08);border:1px solid rgba(232,25,44,.28);border-radius:var(--r);padding:8px 10px"></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button type="button" class="btn btn-p btn-sm" onclick="approvePendingContract('${p.id}')">✅ Одобрить</button>
+        <button type="button" class="btn btn-d btn-sm" onclick="rejectPendingContract('${p.id}')">❌ Отклонить</button>
+        <button type="button" class="btn btn-o btn-sm" onclick="deletePendingContract('${p.id}')">🗑 Удалить</button>
+      </div>
+    </div>
+  `).join('');
+  PENDING_CONTRACTS.forEach(p=>{
+    const host=document.getElementById('pending-emp-'+p.id);
+    if(host)host.innerHTML=empComboMarkup('pending-emp-'+p.id,p.accepted_id,{formStyle:true});
+  });
+}
+
+// Правка поля заявки. times/dates вводятся простым текстом через запятую —
+// парсим в массив перед отправкой на сервер.
+async function pendingFieldChanged(id,field,rawValue){
+  let payload={};
+  if(field==='times'||field==='dates') payload[field]=String(rawValue).split(',').map(s=>s.trim()).filter(Boolean);
+  else if(field==='discount') payload.discount=Number(rawValue)||0;
+  else if(field==='accepted_id') payload.accepted_id=rawValue||null;
+  else payload[field]=rawValue;
+
+  const errEl=document.getElementById('pending-err-'+id);
+  if(errEl){errEl.style.display='none';errEl.textContent='';}
+  try{
+    const updated=await API.put('/contracts/pending/'+id,payload);
+    const idx=PENDING_CONTRACTS.findIndex(x=>x.id===id);
+    if(idx>-1)PENDING_CONTRACTS[idx]=updated;
+    renderPendingContracts();
+  }catch(e){
+    toast(e.error||'Ошибка сохранения','e');
+    renderPendingContracts();
+  }
+}
+
+async function approvePendingContract(id){
+  const errEl=document.getElementById('pending-err-'+id);
+  if(errEl){errEl.style.display='none';errEl.textContent='';}
+  try{
+    const r=await API.post('/contracts/pending/'+id+'/approve',{});
+    toast(`Контракт одобрен: заполнено ${r.filled} слот(ов)`,'s');
+    await loadPendingContracts();
+    loadUpcomingAds();
+  }catch(e){
+    if(errEl){
+      if(e.busy&&e.busy.length){
+        const list=e.busy.map(b=>`${fmtPlainDate(b.date)} ${b.time}`).join(', ');
+        errEl.textContent=`Заняты слоты: ${list}. Поправьте времена/даты заявки и попробуйте снова.`;
+      } else {
+        errEl.textContent=e.error||'Ошибка одобрения';
+      }
+      errEl.style.display='block';
+    } else toast(e.error||'Ошибка одобрения','e');
+  }
+}
+
+async function rejectPendingContract(id){
+  if(!confirm('Отклонить эту заявку?'))return;
+  try{
+    await API.post('/contracts/pending/'+id+'/reject',{});
+    toast('Заявка отклонена','s');
+    await loadPendingContracts();
+  }catch(e){ toast(e.error||'Ошибка','e'); }
+}
+
+async function deletePendingContract(id){
+  if(!confirm('Удалить эту заявку насовсем?'))return;
+  try{
+    await API.del('/contracts/pending/'+id);
+    toast('Заявка удалена','s');
+    await loadPendingContracts();
+  }catch(e){ toast(e.error||'Ошибка','e'); }
 }
 
 // ══════════════════════════════════════════════

@@ -239,6 +239,29 @@ async function initDB() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
     CREATE INDEX IF NOT EXISTS idx_bonuses_week ON bonuses(week_start);
+    -- Заявки на добавление контракта, ожидающие одобрения Curator AD и выше
+    -- (см. requireContractApproval и /api/contracts/pending* ниже). Contract
+    -- Bulk-форма «Добавить контракт» теперь не пишет сразу в contract_slots,
+    -- а создаёт здесь запись со статусом 'pending' — она попадает в
+    -- contract_slots только после /approve.
+    CREATE TABLE IF NOT EXISTS pending_contracts (
+      id TEXT PRIMARY KEY,
+      color TEXT NOT NULL CHECK(color IN ('green','red')),
+      times TEXT NOT NULL DEFAULT '[]',
+      dates TEXT NOT NULL DEFAULT '[]',
+      text TEXT NOT NULL DEFAULT '',
+      accepted_id TEXT REFERENCES employees(id) ON DELETE SET NULL,
+      discount NUMERIC NOT NULL DEFAULT 0,
+      submitted_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+      submitted_by_name TEXT DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','approved','rejected')),
+      reviewed_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+      reviewed_by_name TEXT DEFAULT '',
+      reviewed_at TIMESTAMPTZ,
+      reject_reason TEXT DEFAULT '',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_pending_contracts_status ON pending_contracts(status);
   `);
 
   // Миграция: шрифт для описания (должности) участника состава
@@ -409,6 +432,72 @@ function genTimeSlots(start,end,intervalMin){
   return out;
 }
 
+// ─── Свободен ли слот контракта (используется и при подаче заявки на
+// добавление контракта, и при её одобрении) ───
+// Слот считается СВОБОДНЫМ, если текст пуст и сотрудник не назначен — ИЛИ
+// если в тексте стоит служебная пометка «Перенос с ЧЧ:ММ» (её автоматически
+// проставляет ctTransferChanged на фронте в строку целевого времени переноса
+// — это не настоящий текст контракта, а просто отметка, что сюда что-то
+// перенесли, поэтому новый контракт можно ставить поверх такой пометки).
+const TRANSFER_MARK_RE=/^Перенос с ([01]\d|2[0-3]):[0-5]\d$/;
+function slotIsFree(row){
+  if(!row) return true;
+  const text=(row.text||'').toString().trim();
+  if(TRANSFER_MARK_RE.test(text)) return true;
+  return !text && !row.accepted_id;
+}
+
+// Возвращает список занятых (date,time) пар из запрошенных pairs=[{d,t}] для
+// заданного цвета — используется при подаче заявки и при её одобрении.
+async function findBusyPairs(color,dates,times,pairs){
+  const existing=await query(
+    `SELECT to_char(slot_date,'YYYY-MM-DD') AS d, slot_time AS t, text, accepted_id
+     FROM contract_slots WHERE color=$1 AND slot_date = ANY($2::date[]) AND slot_time = ANY($3::text[])`,
+    [color,dates,times]
+  );
+  const map=new Map();
+  existing.rows.forEach(r=>map.set(`${r.d}_${r.t}`,r));
+  const busy=[];
+  for(const {d,t} of pairs){
+    if(!slotIsFree(map.get(`${d}_${t}`))) busy.push({date:d,time:t});
+  }
+  return busy;
+}
+
+// Считает цену/выплату (формула Калькулятора) и записывает контракт в
+// contract_slots — общая логика для прямого добавления (устаревший путь) и
+// для одобрения заявки (см. /api/contracts/pending/:id/approve). Бросает
+// объект {busy:[...]}, если на момент записи что-то из слотов уже занято.
+async function commitContractToSlots({color,dates,times,text,accepted_id,discount}){
+  const pairs=[];
+  for(const d of dates) for(const t of times) pairs.push({d,t});
+
+  for(const {d,t} of pairs){
+    await query('INSERT INTO contract_slots (id,color,slot_date,slot_time) VALUES ($1,$2,$3,$4) ON CONFLICT (color,slot_date,slot_time) DO NOTHING',[uuid(),color,d,t]);
+  }
+
+  const busy=await findBusyPairs(color,dates,times,pairs);
+  if(busy.length){ const err=new Error('Некоторые слоты уже заняты'); err.busy=busy; throw err; }
+
+  const rate=color==='red'?150:300;
+  const chars=text.length;
+  const totalAds=times.length*dates.length;
+  const baseSum=totalAds*chars*rate;
+  const orderSum=baseSum*(1-discount/100);
+  const treasury=orderSum*0.9;
+  const toEmployee=orderSum*0.1;
+  const perAd=totalAds>0?toEmployee/totalAds:0;
+
+  const wnewsText=`/wnews ${text}`;
+  for(const {d,t} of pairs){
+    await query(
+      `UPDATE contract_slots SET text=$1, accepted_id=$2, price=$3, payout=$4, updated_at=NOW() WHERE color=$5 AND slot_date=$6 AND slot_time=$7`,
+      [wnewsText,accepted_id,orderSum,perAd,color,d,t]
+    );
+  }
+  return { filled:pairs.length, calc:{ chars,totalAds,rate,discount,baseSum,orderSum,treasury,toEmployee,perAd } };
+}
+
 async function requireAuth(req,res,next){
   if(!req.session?.userId) return res.status(401).json({error:'Требуется авторизация'});
   const r=await query('SELECT * FROM users WHERE id=$1',[req.session.userId]);
@@ -486,6 +575,11 @@ async function requireEmployeeMgmt(req,res,next){ await requireAuth(req,res,()=>
 // ограничен: она может выдавать/снимать ИСКЛЮЧИТЕЛЬНО роль Advertising
 // Department (см. проверку внутри PUT /api/users/:id/role ниже).
 async function requireUserMgmt(req,res,next){ await requireAuth(req,res,()=>{ if(!['curator_ad','dep_director','admin','leader'].includes(req.user.role))return res.status(403).json({error:'Нет доступа'});next();}); }
+// Одобрение заявок на добавление контракта (см. /api/contracts/pending* ниже) —
+// «Curator AD и выше»: Curator AD, Dep. Director, Лидер, Администратор.
+// Advertising Dept. только подаёт заявки (см. requireAdvertising на POST
+// /api/contracts/bulk), но не видит и не одобряет очередь.
+async function requireContractApproval(req,res,next){ await requireAuth(req,res,()=>{ if(!['curator_ad','dep_director','admin','leader'].includes(req.user.role))return res.status(403).json({error:'Нет доступа'});next();}); }
 
 // Файл принимаем в память (buffer), а не сразу на диск: так его можно
 // отправить в Cloudinary. Если Cloudinary не настроен — пишем этот же
@@ -783,17 +877,16 @@ app.put('/api/contracts/:id',requireAdvertising,async(req,res)=>{
 });
 
 // ═══════════════════════════════════════════════════════════════════════
-// ДОБАВИТЬ КОНТРАКТ (массовое заполнение слотов из вкладки «Добавить контракт»)
-// Принимает: color, times (список ЧЧ:ММ — если объявлений в день несколько),
-// dates (список дат, любых — см. ниже про снятое ограничение "со следующего дня"),
-// text, accepted_id, discount. Проверяет, что КАЖДАЯ пара время×дата свободна
-// (текст пуст и сотрудник не назначен); если занято хоть одно — ничего не
-// меняет и возвращает список занятых слотов. Если всё свободно — одним
-// действием проставляет текст/принявшего сотрудника; цена контракта (price)
-// это полная сумма заказа за весь контракт, а payout — выплата за 1 объявление,
-// считаются по той же формуле, что в Калькуляторе.
-// Доступ: любой сотрудник с доступом к разделу «Реклама» (Advertising Dept.
-// и выше) — раньше эта возможность была только у Curator AD и выше.
+// ДОБАВИТЬ КОНТРАКТ (вкладка «Добавить контракт»)
+// С этой версии контракт больше НЕ пишется в contract_slots напрямую: этот
+// роут проверяет входные данные и свободны ли нужные слоты (см. slotIsFree —
+// слот с пометкой «Перенос с ЧЧ:ММ» считается свободным), и если всё
+// свободно — создаёт заявку в pending_contracts со статусом 'pending'.
+// Сама запись в таблицу «Контракты» происходит только после одобрения
+// Curator AD и выше, см. POST /api/contracts/pending/:id/approve ниже —
+// на одобрении можно поправить ЛЮБОЕ поле заявки (см. PUT /api/contracts/pending/:id).
+// Доступ к подаче заявки: любой сотрудник с доступом к разделу «Реклама»
+// (Advertising Dept. и выше).
 // ═══════════════════════════════════════════════════════════════════════
 app.post('/api/contracts/bulk', requireAdvertising, async (req, res) => {
   try {
@@ -815,14 +908,6 @@ app.post('/api/contracts/bulk', requireAdvertising, async (req, res) => {
     dates = [...new Set(dates)];
     if (dates.some(d => isNaN(Date.parse(d)))) return res.status(400).json({ error: 'Некорректная дата' });
 
-    // ПРИМЕЧАНИЕ: раньше здесь было жёсткое ограничение "только начиная со
-    // следующего дня" — убрано по просьбе: если сотрудник принял контракт
-    // поздно вечером (например в 23:50) и не успел занести его до полуночи,
-    // после 00:00 серверное "завтра" уже сдвигалось на день вперёд и заносить
-    // контракт на нужную (уже наступившую) дату становилось невозможно.
-    // Теперь можно указывать любую дату начала — как сегодняшнюю/прошедшую
-    // (чтобы закрыть такие пограничные случаи), так и будущую.
-
     discount = parseFloat(discount); if (isNaN(discount) || discount < 0) discount = 0; if (discount > 100) discount = 100;
 
     // Времена должны входить в действующее расписание слотов таблицы контрактов
@@ -835,55 +920,126 @@ app.post('/api/contracts/bulk', requireAdvertising, async (req, res) => {
     const pairs = [];
     for (const d of dates) for (const t of times) pairs.push({ d, t });
 
-    // Гарантируем существование строк слотов на каждую нужную пару (дата,время)
-    for (const { d, t } of pairs) {
-      await query('INSERT INTO contract_slots (id,color,slot_date,slot_time) VALUES ($1,$2,$3,$4) ON CONFLICT (color,slot_date,slot_time) DO NOTHING', [uuid(), color, d, t]);
-    }
-
-    // Проверяем свободны ли нужные слоты (слот свободен, если текст пуст и сотрудник не назначен)
-    const existing = await query(
-      `SELECT to_char(slot_date,'YYYY-MM-DD') AS d, slot_time AS t, text, accepted_id
-       FROM contract_slots WHERE color=$1 AND slot_date = ANY($2::date[]) AND slot_time = ANY($3::text[])`,
-      [color, dates, times]
-    );
-    const map = new Map();
-    existing.rows.forEach(r => map.set(`${r.d}_${r.t}`, r));
-
-    const busy = [];
-    for (const { d, t } of pairs) {
-      const row = map.get(`${d}_${t}`);
-      const free = row && (!row.text || !row.text.trim()) && !row.accepted_id;
-      if (!free) busy.push({ date: d, time: t });
-    }
+    // Проверяем свободны ли нужные слоты уже на этапе подачи заявки (слот
+    // свободен, если текст пуст и сотрудник не назначен, либо если в нём
+    // стоит служебная пометка «Перенос с ЧЧ:ММ» — см. slotIsFree выше).
+    const busy = await findBusyPairs(color, dates, times, pairs);
     if (busy.length) return res.status(409).json({ error: 'Некоторые слоты уже заняты', busy });
 
-    // Расчёт как в Калькуляторе: символ × 300 (зелёные) / × 150 (красные); казна 90% / сотрудник 10%
-    const rate = color === 'red' ? 150 : 300;
-    const chars = text.length;
-    const totalAds = times.length * dates.length;
-    const baseSum = totalAds * chars * rate;
-    const orderSum = baseSum * (1 - discount / 100);
-    const treasury = orderSum * 0.9;
-    const toEmployee = orderSum * 0.1;
-    const perAd = totalAds > 0 ? toEmployee / totalAds : 0;
+    const id = uuid();
+    await query(
+      `INSERT INTO pending_contracts (id,color,times,dates,text,accepted_id,discount,submitted_by,submitted_by_name)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+      [id, color, JSON.stringify(times), JSON.stringify(dates), text, accepted_id, discount, req.user.id, req.user.name]
+    );
+    const r = await query('SELECT * FROM pending_contracts WHERE id=$1', [id]);
+    res.json({ ok: true, pending: true, request: r.rows[0] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
 
-    // В саму таблицу «Контракты» текст сохраняется с префиксом команды /wnews —
-    // так его можно сразу скопировать и вставить в игровой чат. Цена и выплата
-    // при этом считаются по исходному тексту БЕЗ префикса (см. chars/orderSum выше),
-    // чтобы префикс не влиял на стоимость объявления.
-    const wnewsText = `/wnews ${text}`;
-    for (const { d, t } of pairs) {
-      await query(
-        `UPDATE contract_slots SET text=$1, accepted_id=$2, price=$3, payout=$4, updated_at=NOW() WHERE color=$5 AND slot_date=$6 AND slot_time=$7`,
-        [wnewsText, accepted_id, orderSum, perAd, color, d, t]
-      );
+// ═══════════════════════════════════════════════════════════════════════
+// ОДОБРЕНИЕ ЗАЯВОК НА ДОБАВЛЕНИЕ КОНТРАКТА (Curator AD и выше)
+// ═══════════════════════════════════════════════════════════════════════
+// Список заявок (по умолчанию только 'pending'; ?status=all — вообще все,
+// включая уже одобренные/отклонённые, для истории).
+app.get('/api/contracts/pending', requireContractApproval, async (req, res) => {
+  try {
+    const status = req.query.status;
+    const r = status === 'all'
+      ? await query('SELECT * FROM pending_contracts ORDER BY created_at DESC')
+      : await query(`SELECT * FROM pending_contracts WHERE status='pending' ORDER BY created_at`);
+    res.json(r.rows.map(row => ({ ...row, times: parseJSON(row.times, []), dates: parseJSON(row.dates, []) })));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Правка любого поля заявки ДО одобрения (доступно только пока status='pending').
+app.put('/api/contracts/pending/:id', requireContractApproval, async (req, res) => {
+  try {
+    const cur = await query('SELECT * FROM pending_contracts WHERE id=$1', [req.params.id]);
+    if (!cur.rows.length) return res.status(404).json({ error: 'Заявка не найдена' });
+    if (cur.rows[0].status !== 'pending') return res.status(409).json({ error: 'Заявка уже обработана' });
+
+    let { color, times, dates, text, accepted_id, discount } = req.body;
+    color = color === 'red' ? 'red' : (color === 'green' ? 'green' : cur.rows[0].color);
+    if (text !== undefined) text = (text || '').toString().trim();
+    if (times !== undefined) {
+      const timeRe = /^([01]\d|2[0-3]):[0-5]\d$/;
+      if (!Array.isArray(times) || !times.length || times.some(t => !timeRe.test(t))) return res.status(400).json({ error: 'Некорректное время' });
+      times = [...new Set(times)];
+    }
+    if (dates !== undefined) {
+      if (!Array.isArray(dates) || !dates.length || dates.some(d => isNaN(Date.parse(d)))) return res.status(400).json({ error: 'Некорректная дата' });
+      dates = [...new Set(dates)];
+    }
+    if (discount !== undefined) { discount = parseFloat(discount); if (isNaN(discount) || discount < 0) discount = 0; if (discount > 100) discount = 100; }
+    if (accepted_id) {
+      const emp = await query('SELECT id FROM employees WHERE id=$1', [accepted_id]);
+      if (!emp.rows.length) return res.status(400).json({ error: 'Сотрудник не найден' });
     }
 
-    res.json({
-      ok: true, filled: pairs.length, color, dates, times,
-      calc: { chars, totalAds, rate, discount, baseSum, orderSum, treasury, toEmployee, perAd }
-    });
+    const next = {
+      color, text: text !== undefined ? text : cur.rows[0].text,
+      accepted_id: accepted_id !== undefined ? accepted_id : cur.rows[0].accepted_id,
+      discount: discount !== undefined ? discount : cur.rows[0].discount,
+      times: times !== undefined ? times : parseJSON(cur.rows[0].times, []),
+      dates: dates !== undefined ? dates : parseJSON(cur.rows[0].dates, []),
+    };
+    await query(
+      `UPDATE pending_contracts SET color=$1,times=$2,dates=$3,text=$4,accepted_id=$5,discount=$6 WHERE id=$7`,
+      [next.color, JSON.stringify(next.times), JSON.stringify(next.dates), next.text, next.accepted_id || null, next.discount, req.params.id]
+    );
+    const r = await query('SELECT * FROM pending_contracts WHERE id=$1', [req.params.id]);
+    res.json({ ...r.rows[0], times: parseJSON(r.rows[0].times, []), dates: parseJSON(r.rows[0].dates, []) });
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Одобрить: перепроверяем свободные слоты (могли занять, пока заявка ждала)
+// и, если всё ещё всё свободно, записываем контракт в contract_slots — той
+// же формулой расчёта, что и в Калькуляторе (см. commitContractToSlots).
+app.post('/api/contracts/pending/:id/approve', requireContractApproval, async (req, res) => {
+  try {
+    const cur = await query('SELECT * FROM pending_contracts WHERE id=$1', [req.params.id]);
+    if (!cur.rows.length) return res.status(404).json({ error: 'Заявка не найдена' });
+    const row = cur.rows[0];
+    if (row.status !== 'pending') return res.status(409).json({ error: 'Заявка уже обработана' });
+    if (!row.accepted_id) return res.status(400).json({ error: 'Выберите сотрудника, принявшего контракт' });
+
+    const times = parseJSON(row.times, []);
+    const dates = parseJSON(row.dates, []);
+    let result;
+    try {
+      result = await commitContractToSlots({ color: row.color, dates, times, text: row.text, accepted_id: row.accepted_id, discount: Number(row.discount) || 0 });
+    } catch (e) {
+      if (e.busy) return res.status(409).json({ error: 'Некоторые слоты уже заняты', busy: e.busy });
+      throw e;
+    }
+    await query(
+      `UPDATE pending_contracts SET status='approved', reviewed_by=$1, reviewed_by_name=$2, reviewed_at=NOW() WHERE id=$3`,
+      [req.user.id, req.user.name, req.params.id]
+    );
+    res.json({ ok: true, filled: result.filled, color: row.color, dates, times, calc: result.calc });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Отклонить заявку (без записи в contract_slots). Необязательная причина.
+app.post('/api/contracts/pending/:id/reject', requireContractApproval, async (req, res) => {
+  try {
+    const cur = await query('SELECT * FROM pending_contracts WHERE id=$1', [req.params.id]);
+    if (!cur.rows.length) return res.status(404).json({ error: 'Заявка не найдена' });
+    if (cur.rows[0].status !== 'pending') return res.status(409).json({ error: 'Заявка уже обработана' });
+    const reason = (req.body?.reason || '').toString().trim().slice(0, 300);
+    await query(
+      `UPDATE pending_contracts SET status='rejected', reviewed_by=$1, reviewed_by_name=$2, reviewed_at=NOW(), reject_reason=$3 WHERE id=$4`,
+      [req.user.id, req.user.name, reason, req.params.id]
+    );
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Удалить заявку из списка насовсем (уборка истории одобренных/отклонённых).
+app.delete('/api/contracts/pending/:id', requireContractApproval, async (req, res) => {
+  try { await query('DELETE FROM pending_contracts WHERE id=$1', [req.params.id]); res.json({ ok: true }); }
+  catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // ═══════════════════════════════════════════════════════════════════════
